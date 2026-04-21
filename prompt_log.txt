@@ -1,1406 +1,352 @@
 ======================================================================
-PROMPT 1: AMBIGUITY CHECK
+PROMPT 1
 ======================================================================
-I am building an Appointment Slot Recommender in Python. Before we begin writing any code, I need you to review my requirements specification.
+im building an Appointment Slot Recommender in Python. Before we begin implementing, I need you to review my requirements specification.
 
-Please carefully read the following requirements, constraints, acceptance criteria, and edge cases. Check them strictly for any ambiguity, contradictions, or missing edge cases. Do not generate any code yet. Just provide your analysis on the clarity and completeness of these specifications.
+My system must satisfy two specific user personas:
+Persona 1 (Jane): A busy professional who needs automation, trusts the system to resolve conflicts automatically (like overlapping intervals), wants predictable/stable sorting, and dislikes manual oversight.
+Persona 2 (Mo): An edge user with accessibility needs who experiences stress from uncertainty. They require absolute determinism, consistent handling of boundary scenarios, and explicit handling of edge cases rather than silent failures.
 
-Here are the specifications:
+Please review the following System Description, Constraints, and Acceptance Criteria. Identify any possible issues such as missing constraints, ambiguous requirements, or unhandled edge cases. Do not request or generate any code yet. Just provide your analysis.
 
-**Objective**
-The objective of the system is to recommend chronologically ordered and available meeting slots within a defined working window. It evaluates requested meeting durations against existing busy intervals and buffer constraints to identify valid appointment times.
+System Description:
+The objective of the system is to reliably recommend chronologically ordered meeting slots within a defined working window while automatically resolving scheduling conflicts.
+Inputs: working_hours, busy_intervals, duration, buffer (optional), candidate_window (optional), n.
+Output: A deterministic, chronologically sorted list of up to 'n' valid appointment Slot objects, or an empty list [] if none exist.
 
-**Inputs**
-- working_hours: Tuple or list of times (start & end) defining the overall valid time window.
-- busy_intervals: List of time tuples representing existing meetings that cannot be overlapped.
-- meeting_duration: Integer or float representing the required length of the appointment.
-- buffer_time (Optional): Integer or float representing the required mandatory gap between meetings.
-- candidate_window (Optional): Tuple of times restricting suggestions to a specific subset of the working hours.
+Constraints:
+C1: The system must automatically merge overlapping or unsorted busy intervals without user intervention.
+C2: The system must limit outputs to a maximum of N slots, sorted strictly in ascending chronological order.
+C3: The system behavior must be 100% deterministic, producing identical slot outputs for identical inputs.
+C4: If the schedule is fully booked, the system must explicitly return an empty list [] rather than throwing an unhandled exception.
+C5: Buffer times must be strictly and consistently applied around all busy intervals, even when gaps exactly match the required duration.
+C6: Candidate windows that fall partially outside working hours must be consistently clipped to the working hours intersection.
 
-**Output**
-A chronologically ordered list of tuples representing the next N valid appointment slots that satisfy all constraints.
-
-**Functional Requirements**
-- The system must accept working hours, a list of existing busy intervals, and a required meeting duration.
-- The system must accept an optional buffer time between meetings.
-- The system must optionally restrict suggestions to a specific candidate time window.
-- The system must return appointment slots ordered chronologically.
-- The system must handle and consolidate overlapping or unsorted busy intervals.
-- The system must output the next N valid appointment suggestions.
-
-**Constraints**
-1. Suggested slots must fall entirely within the defined working hours (or candidate window if provided).
-2. Suggested slots must not overlap with any existing busy intervals.
-3. Buffer time must be strictly respected before and after busy intervals when evaluating availability.
-4. Output ordering must be deterministic under identical inputs.
-5. The system must accurately process busy intervals even if they are provided unsorted.
-6. The system must correctly navigate non-trivial scenarios like adjacent busy intervals with zero gap.
-
-**Invariants**
-1. Returned slots must always be at least as long as the required meeting duration.
-2. No returned slot may violate the buffer constraints relative to existing busy intervals.
-3. The returned list must always reflect the current system state (no phantom availability).
-
-**Negative Requirements**
-1. The system must not suggest times that fall outside the specified working hours.
-2. The system must not return overlapping available slots as separate recommendations.
-
-**Tie-Breaking Rules**
-If multiple feasible scenarios or slots satisfy all constraints, the system prioritizes them strictly by chronological order (the earliest available valid start time is chosen first).
-
-**Exceptions**
-If the requested meeting duration (plus any required buffer) is longer than any available gap within the working window, or if the working window is fully booked, the system must handle the exception by returning an empty list (indicating no availability).
-
-**Acceptance Criteria**
-AC1: Given a defined working window and a list of busy intervals, When a meeting duration is requested, Then the system returns slots that do not overlap with any busy intervals.
-AC2: Given a mandatory buffer time, When calculating availability, Then all suggested slots maintain the required buffer distance from any busy interval.
-AC3: Given identical inputs of working hours, busy intervals, and duration, When the system is executed multiple times, Then the exact same list of slots is returned in the same order.
-AC4: Given a list of unsorted and overlapping busy intervals, When the system processes them, Then it successfully merges them to find the correct valid gaps.
-AC5: Given an optional candidate time window, When requested, Then the system strictly restricts its suggestions to that specific window.
-AC6: Given a required meeting duration, When valid slots are returned, Then every returned slot's duration is greater than or equal to the requested duration.
-
-**Edge Cases**
-EC1: No availability within the working window (e.g., fully booked day).
-EC2: Unsorted and overlapping busy intervals.
-EC3: Minimal gap between meetings is exactly equal to the requested duration plus the buffer.
-EC4: The requested meeting duration is longer than the entire working hours window.
+Acceptance Criteria:
+AC1: Given an unsorted list of overlapping busy intervals, When the system evaluates availability, Then it successfully merges them into distinct continuous blocks.
+AC2: Given a valid request for N slots, When the slots are returned, Then they are strictly ordered from earliest start time to latest.
+AC3: Given the exact same inputs, When the function is called multiple times, Then the exact same list of slots is returned.
+AC4: Given a fully booked working window, When a meeting is requested, Then the system returns an empty list [] instead of an error.
+AC5: Given a buffer requirement and an exact-fit gap, When slots are calculated, Then the slot is only returned if the duration plus the buffer fits entirely within the gap.
+AC6: Given a candidate window that exceeds working hours, When slots are suggested, Then no slots are suggested past the working hours limit.
 
 ======================================================================
-RESPONSE 1: ChatGPT
+RESPONSE 1
 ======================================================================
-Your specification is already quite solid—structured, consistent, and clearly thought through. That said, if you were to hand this to another engineer (or revisit it later), there are a few areas where ambiguity, hidden assumptions, or missing edge cases could cause implementation drift or subtle bugs.
-Here's a focused breakdown.
-
-🔍 1. Ambiguities That Need Clarification
-1.1 Time Representation
-You never define what a "time" actually is.
-Is it: datetime objects? minutes since midnight (int)? floats (e.g., 9.5 = 9:30)? strings like "09:30"?
-👉 Why this matters:
-Sorting, comparisons, and buffer arithmetic depend heavily on this.
-Floats introduce precision issues (e.g., 0.1 + 0.2 problems).
-Recommendation: Explicitly define a canonical time format.
-
-1.2 Definition of "Slot"
-You say: "list of tuples representing appointment slots"
-But: Are these (start, end)? Or (start, duration)?
-Also unclear: Should slots be maximal (full gap)? Or minimal valid windows (exact duration chunks)? Or all possible sliding windows?
-👉 Example ambiguity: If a gap is 9:00–10:00 and duration is 30 min: Return: [(9:00–9:30), (9:30–10:00)] ? Or just [(9:00–9:30)] ? Or sliding windows every minute?
-Recommendation: Define slot generation strategy explicitly.
-
-1.3 Meaning of "Next N"
-You say: "next N valid appointment slots"
-But: What is N? Input parameter? Fixed default? Unlimited?
-👉 This is a critical missing input.
-
-1.4 Buffer Semantics
-You state: "Buffer time must be strictly respected before and after busy intervals"
-But unclear: Does buffer apply: Only around busy intervals? Or also between suggested slots?
-Does buffer apply: To working hours boundaries?
-👉 Example: Busy: 10:00–11:00, buffer = 15. Is 11:15 valid? Yes. Is 9:45 valid? Yes.
-But: Can two suggested slots be back-to-back? e.g., 9:00–9:30 and 9:30–10:00?
-Recommendation: Clarify whether buffer applies: only vs busy intervals or globally between all meetings.
-
-1.5 Candidate Window Interaction
-You say: "restrict suggestions to candidate window"
-But unclear: Does it: Override working hours? Or intersect with working hours?
-👉 Example: Working hours: 9–5. Candidate window: 4–7. Is valid range: 4–5 (intersection)? or invalid input?
-Recommendation: Define: effective_window = intersection(working_hours, candidate_window)
-
-1.6 Inclusivity of Boundaries
-You don't define whether intervals are: [start, end) (half-open) or [start, end] (closed).
-👉 This affects: Adjacent meetings. Zero-gap scenarios.
-Example: Busy: 10:00–11:00. Can meeting start at 11:00?
-Recommendation: Use half-open intervals [start, end) (industry standard).
-
-⚠️ 2. Hidden Contradictions / Logical Tensions
-2.1 "Do not return overlapping slots" vs multiple valid slots
-You say: "must not return overlapping available slots"
-But if using sliding windows, overlap is inevitable.
-👉 So you're implicitly requiring: discrete, non-overlapping slots. But not stated.
-
-2.2 Buffer + Exact Fit Edge Case
-Edge case EC3: gap exactly equals duration + buffer
-But buffer is required before and after busy intervals, so: Actual usable gap: gap >= duration + 2 * buffer
-Unless: buffer is applied asymmetrically at edges.
-👉 This is inconsistent with your current wording.
-
-2.3 Exception vs Normal Return
-You say: "handle the exception by returning an empty list"
-This is not really an "exception" — it's normal control flow.
-👉 Either: Raise exception OR return empty list. Right now it's mixed terminology.
-
-🧩 3. Missing Edge Cases
-You covered good ones, but here are important gaps:
-3.1 Busy Intervals Outside Working Hours
-Example: Working hours: 9–5. Busy: 7–8 or 6–7. 👉 Should be ignored? clipped?
-3.2 Busy Intervals Partially Outside
-Example: Busy: 4–6 👉 Should become: 4–5 (clipped) or invalid?
-3.3 Zero or Negative Inputs
-meeting_duration = 0, buffer_time < 0, working_hours start >= end
-3.4 Empty Busy Intervals
-You didn't explicitly state behavior: Should return full working window as availability?
-3.5 Candidate Window Outside Working Hours
-Already mentioned—but needs explicit handling.
-3.6 Floating Point Precision Issues
-If using floats: 0.1 + 0.2 ≠ 0.3 👉 This can break exact comparisons in: EC3 (exact fits)
-3.7 Extremely Large N
-What if N > number of possible slots? Return all? Error?
-3.8 Timezone / Day Boundary
-Are all times same day? Can intervals cross midnight?
-3.9 Duplicate Busy Intervals
-Should be merged—but not explicitly stated.
-
-🧱 4. Structural Gaps
-4.1 Missing Input: N
-This is the biggest omission. You require: "next N slots". But N is not defined anywhere.
-4.2 Slot Generation Strategy
-This is the second biggest gap. You must define: Fixed increments? (e.g., 15 min grid). Continuous scan? Greedy earliest-fit? Without this, two correct implementations can produce totally different outputs.
-4.3 Determinism Depends on Above
-You require deterministic output, but: If slot generation is undefined → determinism is meaningless.
-
-✅ 5. What's Strong
-To be fair, several parts are very well done:
-Clear separation of: constraints, invariants, negative requirements
-Good handling of: unsorted intervals, merging overlaps
-Determinism requirement (excellent for testing)
-Edge cases are thoughtful (especially EC3)
-
-🧭 Final Verdict
-Your spec is conceptually strong but operationally under-specified.
-
-Critical fixes needed before coding:
-Define time representation
-Add N as an input
-Define slot generation strategy
-Clarify buffer semantics
-Define interval inclusivity ([start, end) vs closed)
-Specify candidate window interaction
-
-Secondary improvements:
-Add missing edge cases
-Clean up terminology ("exception" vs return)
-Clarify behavior for out-of-bound intervals
-If you want, next step I can help you:
-turn this into a formal spec (implementation-ready)
-or propose multiple slot-generation strategies and their tradeoffs before coding
-
-======================================================================
-PROMPT 2: CLARIFICATIONS AND INITIAL IMPLEMENTATION
-======================================================================
-thanks, let's clarify those ambiguities so we can implement the system. Clarifications: Time Representation: We will use strings in 24-hour format ("HH:MM") for inputs and outputs, but internally convert them to minutes since midnight (integers) for all calculations. Definition of "Slot": Slots should be discrete, minimal valid windows (exact duration chunks). For example, if a valid gap is 60 minutes and the duration is 30 minutes, it should return two consecutive 30-minute slots. Meaning of "Next N": Add n as an integer input parameter (default to 1). If n is greater than the total number of possible slots, just return all possible valid slots. Buffer Semantics: The buffer applies ONLY around existing busy_intervals (before and after). It does not apply between newly suggested slots. Candidate Window: The effective window is the strict intersection of working_hours and candidate_window. If a candidate window falls outside working hours, clip it to working hours. Inclusivity: Use half-open intervals [start, end). A meeting can start at the exact minute another ends (if buffer is 0). Exceptions: Instead of raising a Python Exception, return an empty list [] if no valid slots are found. Your Task: Please write the complete Python implementation for this module. Include a main function that handles the logic. (Note: The lab instructions imply there might be a function called is_allocation_feasible used for testing, so feel free to use helper functions if it makes the code cleaner). Make sure the code is clean, heavily commented, and explicitly handles unsorted/overlapping busy intervals. Do NOT write the tests yet. Just the solution code
-
-======================================================================
-RESPONSE 2: ChatGPT
-======================================================================
-Great—those clarifications remove all the major ambiguities. The problem is now well-defined and implementable in a clean, deterministic way.
-
-Below is a complete Python implementation that follows your specification precisely. It is structured, heavily commented, and handles all the edge cases discussed.
+Your specification is already quite solid—especially in how it emphasizes determinism and conflict resolution, which directly supports both Jane and Mo. That said, there are several subtle gaps and ambiguities that could cause inconsistencies or edge-case failures if not clarified up front.
 
 ---
 
-```python
-from typing import List, Tuple, Optional
+## 1. Input Definition Ambiguities
 
+### Time Representation
 
-# ----------------------------
-# Utility Functions
-# ----------------------------
+You never define:
 
-def time_to_minutes(t: str) -> int:
-    """
-    Convert "HH:MM" string to minutes since midnight.
-    """
-    hours, minutes = map(int, t.split(":"))
-    return hours * 60 + minutes
+* Time format (e.g., ISO 8601, naive datetime, timezone-aware)
+* Timezone handling
 
+**Why this matters:**
 
-def minutes_to_time(m: int) -> str:
-    """
-    Convert minutes since midnight back to "HH:MM".
-    """
-    hours = m // 60
-    minutes = m % 60
-    return f"{hours:02d}:{minutes:02d}"
+* Determinism (C3, AC3) breaks if timezones are implicit or inconsistent.
+* Edge cases like DST transitions can create non-deterministic or duplicate slots.
 
+**Recommendation:**
+Specify:
 
-# ----------------------------
-# Core Interval Logic
-# ----------------------------
-
-def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
-    """
-    Merge overlapping and adjacent intervals.
-    Assumes intervals are in minutes.
-    """
-    if not intervals:
-        return []
-
-    # Sort by start time
-    intervals.sort(key=lambda x: x[0])
-
-    merged = [intervals[0]]
-
-    for current in intervals[1:]:
-        last_start, last_end = merged[-1]
-        curr_start, curr_end = current
-
-        if curr_start <= last_end:  # overlap or adjacent
-            merged[-1] = (last_start, max(last_end, curr_end))
-        else:
-            merged.append(current)
-
-    return merged
-
-
-def apply_buffer(intervals: List[Tuple[int, int]], buffer: int) -> List[Tuple[int, int]]:
-    """
-    Expand each busy interval by buffer before and after.
-    """
-    if buffer <= 0:
-        return intervals[:]
-
-    buffered = []
-    for start, end in intervals:
-        buffered.append((start - buffer, end + buffer))
-
-    return buffered
-
-
-def clip_intervals_to_window(
-    intervals: List[Tuple[int, int]],
-    window: Tuple[int, int]
-) -> List[Tuple[int, int]]:
-    """
-    Clip intervals so they lie within the given window.
-    """
-    w_start, w_end = window
-    clipped = []
-
-    for start, end in intervals:
-        # Ignore completely outside
-        if end <= w_start or start >= w_end:
-            continue
-
-        clipped.append((max(start, w_start), min(end, w_end)))
-
-    return clipped
-
-
-def find_free_gaps(
-    busy: List[Tuple[int, int]],
-    window: Tuple[int, int]
-) -> List[Tuple[int, int]]:
-    """
-    Given merged busy intervals, find free gaps within window.
-    """
-    free_gaps = []
-    w_start, w_end = window
-
-    prev_end = w_start
-
-    for start, end in busy:
-        if start > prev_end:
-            free_gaps.append((prev_end, start))
-        prev_end = max(prev_end, end)
-
-    # Final gap after last busy interval
-    if prev_end < w_end:
-        free_gaps.append((prev_end, w_end))
-
-    return free_gaps
-
-
-def generate_slots(
-    free_gaps: List[Tuple[int, int]],
-    duration: int
-) -> List[Tuple[int, int]]:
-    """
-    Generate discrete, non-overlapping slots of exact duration.
-    """
-    slots = []
-
-    for start, end in free_gaps:
-        current = start
-
-        while current + duration <= end:
-            slots.append((current, current + duration))
-            current += duration  # discrete chunks (no overlap)
-
-    return slots
-
-
-# ----------------------------
-# Main Function
-# ----------------------------
-
-def recommend_appointment_slots(
-    working_hours: Tuple[str, str],
-    busy_intervals: List[Tuple[str, str]],
-    meeting_duration: int,
-    buffer_time: int = 0,
-    candidate_window: Optional[Tuple[str, str]] = None,
-    n: int = 1
-) -> List[Tuple[str, str]]:
-    """
-    Main function to recommend appointment slots.
-
-    Parameters:
-    - working_hours: ("HH:MM", "HH:MM")
-    - busy_intervals: list of ("HH:MM", "HH:MM")
-    - meeting_duration: duration in minutes
-    - buffer_time: buffer around busy intervals (minutes)
-    - candidate_window: optional ("HH:MM", "HH:MM")
-    - n: number of slots to return
-
-    Returns:
-    - List of ("HH:MM", "HH:MM") slots
-    """
-
-    # ----------------------------
-    # Input Validation
-    # ----------------------------
-    if meeting_duration <= 0:
-        return []
-
-    if n <= 0:
-        return []
-
-    # Convert working hours
-    w_start = time_to_minutes(working_hours[0])
-    w_end = time_to_minutes(working_hours[1])
-
-    if w_start >= w_end:
-        return []
-
-    # Convert candidate window if provided
-    if candidate_window:
-        c_start = time_to_minutes(candidate_window[0])
-        c_end = time_to_minutes(candidate_window[1])
-
-        # Intersection with working hours
-        w_start = max(w_start, c_start)
-        w_end = min(w_end, c_end)
-
-        if w_start >= w_end:
-            return []
-
-    effective_window = (w_start, w_end)
-
-    # ----------------------------
-    # Process Busy Intervals
-    # ----------------------------
-    busy_minutes = [
-        (time_to_minutes(start), time_to_minutes(end))
-        for start, end in busy_intervals
-    ]
-
-    # Apply buffer
-    busy_with_buffer = apply_buffer(busy_minutes, buffer_time)
-
-    # Clip to working window
-    busy_clipped = clip_intervals_to_window(busy_with_buffer, effective_window)
-
-    # Merge overlapping intervals
-    busy_merged = merge_intervals(busy_clipped)
-
-    # ----------------------------
-    # Find Free Gaps
-    # ----------------------------
-    free_gaps = find_free_gaps(busy_merged, effective_window)
-
-    # ----------------------------
-    # Generate Slots
-    # ----------------------------
-    slots = generate_slots(free_gaps, meeting_duration)
-
-    if not slots:
-        return []
-
-    # ----------------------------
-    # Limit to N slots
-    # ----------------------------
-    slots = slots[:n]
-
-    # ----------------------------
-    # Convert Back to "HH:MM"
-    # ----------------------------
-    formatted_slots = [
-        (minutes_to_time(start), minutes_to_time(end))
-        for start, end in slots
-    ]
-
-    return formatted_slots
-
-
-# ----------------------------
-# Optional Helper (for testing feasibility)
-# ----------------------------
-
-def is_allocation_feasible(
-    slot: Tuple[str, str],
-    busy_intervals: List[Tuple[str, str]],
-    buffer_time: int = 0
-) -> bool:
-    """
-    Check if a given slot is feasible given busy intervals and buffer.
-    Useful for testing.
-    """
-
-    s_start = time_to_minutes(slot[0])
-    s_end = time_to_minutes(slot[1])
-
-    for b_start, b_end in busy_intervals:
-        b_start_m = time_to_minutes(b_start) - buffer_time
-        b_end_m = time_to_minutes(b_end) + buffer_time
-
-        # Check overlap (half-open intervals)
-        if not (s_end <= b_start_m or s_start >= b_end_m):
-            return False
-
-    return True
-```
+* A single canonical time format
+* Explicit timezone handling (e.g., all inputs must be timezone-aware and normalized)
 
 ---
 
-# ✅ What This Implementation Guarantees
+### Interval Boundary Semantics
 
-* Deterministic output (sorted, consistent)
-* Handles:
+Not defined:
 
-  * unsorted intervals
-  * overlapping intervals
-  * buffer expansion
-  * clipping to working/candidate window
-* Uses **half-open intervals [start, end)**
-* Produces **discrete, non-overlapping slots**
-* Clean separation of concerns (easy to test each piece)
+* Are intervals **closed**, **open**, or **half-open**? (e.g., `[start, end)`)
 
----
+**Why this matters:**
 
-# ⚠️ One Subtle Design Choice (Intentional)
+* Directly affects:
 
-Slots are generated like this:
+  * Buffer application (C5)
+  * "Exact fit" logic (AC5)
+  * Whether adjacent slots are valid or overlapping
 
-```python
-current += duration
-```
+**Example ambiguity:**
+If a busy interval ends at 10:00 and a slot starts at 10:00:
 
-So:
+* Is that allowed or considered overlapping?
 
-* No sliding windows
-* No overlaps
-* Fully deterministic chunking
+**Recommendation:**
+Define a strict rule like:
 
-This matches your clarified requirement exactly.
+> All intervals are half-open: `[start, end)`
 
 ---
 
-If you want next, I can:
+### Definition of "Slot"
 
-* walk through a complex example step-by-step
-* add test cases (including tricky edge cases)
-* or optimize for large-scale inputs (e.g., thousands of intervals)
+You say "Slot objects" but don't define:
 
-======================================================================
-PROMPT 3: ADAPTING TO TEACHING TEAM STUB
-======================================================================
-wait actually i just checked my project repository and found that the teachin team has provided a starter solution.py stub. We MUST use their exact data models (TimeWindow, BusyInterval, Slot) and their exact function signature (suggest_slots) which relies on datetime.time, datetime.date, and datetime.timedelta. Please rewrite your implementation so that it fits perfectly inside this stub. Keep the logic we agreed on (handling overlaps, buffers, half-open intervals), but adapt it to strictly use their classes and datetime objects. Here is the exact stub you must complete. Do not change the data models or function signature. Just fill in the TODO section: Python from dataclasses import dataclass from datetime import date, datetime, timedelta, time from typing import List, Optional, Tuple @dataclass(frozen=True) class TimeWindow: start: time end: time @dataclass(frozen=True) class BusyInterval: start: time end: time @dataclass(frozen=True) class Slot: start_time: time class InfeasibleSchedule(Exception): pass def suggest_slots( day: date, working_hours: TimeWindow, busy_intervals: List[BusyInterval], duration: timedelta, n: int, buffer: timedelta = timedelta(0), candidate_window: Optional[TimeWindow] = None ) -> List[Slot]: # TODO: Implement as per lab handout requirements and constraints. raise NotImplementedError("suggest_slots has not been implemented yet")
+* Required fields (start, end?)
+* Whether equality comparison is structural or referential
 
-======================================================================
-RESPONSE 3: ChatGPT
-======================================================================
-Got it—this changes the surface API, but the core logic ports cleanly. Below is a full implementation that strictly adheres to your provided data models and function signature, while preserving all agreed semantics:
+**Why this matters:**
 
-Half-open intervals [start, end)
-Buffer applied only around busy intervals
-Deterministic ordering
-Discrete, non-overlapping slots of exact duration
-Proper handling of unsorted/overlapping intervals
-Intersection with candidate_window
-Returns [] when infeasible (does not raise)
-
-```python
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, time
-from typing import List, Optional, Tuple
-
-@dataclass(frozen=True)
-class TimeWindow:
-    start: time
-    end: time
-
-@dataclass(frozen=True)
-class BusyInterval:
-    start: time
-    end: time
-
-@dataclass(frozen=True)
-class Slot:
-    start_time: time
-
-class InfeasibleSchedule(Exception):
-    pass
-
-
-def suggest_slots(
-    day: date,
-    working_hours: TimeWindow,
-    busy_intervals: List[BusyInterval],
-    duration: timedelta,
-    n: int,
-    buffer: timedelta = timedelta(0),
-    candidate_window: Optional[TimeWindow] = None
-) -> List[Slot]:
-
-    # ----------------------------
-    # Helper functions
-    # ----------------------------
-
-    def to_dt(t: time) -> datetime:
-        """Combine date + time into datetime."""
-        return datetime.combine(day, t)
-
-    def merge_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
-        """Merge overlapping or adjacent intervals."""
-        if not intervals:
-            return []
-
-        intervals.sort(key=lambda x: x[0])
-        merged = [intervals[0]]
-
-        for curr_start, curr_end in intervals[1:]:
-            last_start, last_end = merged[-1]
-
-            if curr_start <= last_end:  # overlap or adjacent
-                merged[-1] = (last_start, max(last_end, curr_end))
-            else:
-                merged.append((curr_start, curr_end))
-
-        return merged
-
-    def apply_buffer(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
-        """Expand each interval by buffer before and after."""
-        if buffer <= timedelta(0):
-            return intervals[:]
-
-        return [(start - buffer, end + buffer) for start, end in intervals]
-
-    def clip_to_window(
-        intervals: List[Tuple[datetime, datetime]],
-        window: Tuple[datetime, datetime]
-    ) -> List[Tuple[datetime, datetime]]:
-        """Clip intervals to the effective window."""
-        w_start, w_end = window
-        clipped = []
-
-        for start, end in intervals:
-            if end <= w_start or start >= w_end:
-                continue
-            clipped.append((max(start, w_start), min(end, w_end)))
-
-        return clipped
-
-    def find_free_gaps(
-        busy: List[Tuple[datetime, datetime]],
-        window: Tuple[datetime, datetime]
-    ) -> List[Tuple[datetime, datetime]]:
-        """Find free gaps within window given merged busy intervals."""
-        free = []
-        w_start, w_end = window
-
-        prev_end = w_start
-
-        for start, end in busy:
-            if start > prev_end:
-                free.append((prev_end, start))
-            prev_end = max(prev_end, end)
-
-        if prev_end < w_end:
-            free.append((prev_end, w_end))
-
-        return free
-
-    def generate_slots(
-        gaps: List[Tuple[datetime, datetime]]
-    ) -> List[datetime]:
-        """Generate discrete slot start times."""
-        starts = []
-
-        for start, end in gaps:
-            current = start
-            while current + duration <= end:
-                starts.append(current)
-                current += duration  # discrete, non-overlapping
-
-        return starts
-
-    # ----------------------------
-    # Input validation
-    # ----------------------------
-
-    if duration <= timedelta(0) or n <= 0:
-        return []
-
-    w_start = to_dt(working_hours.start)
-    w_end = to_dt(working_hours.end)
-
-    if w_start >= w_end:
-        return []
-
-    # Apply candidate window (intersection)
-    if candidate_window:
-        c_start = to_dt(candidate_window.start)
-        c_end = to_dt(candidate_window.end)
-
-        w_start = max(w_start, c_start)
-        w_end = min(w_end, c_end)
-
-        if w_start >= w_end:
-            return []
-
-    effective_window = (w_start, w_end)
-
-    # ----------------------------
-    # Process busy intervals
-    # ----------------------------
-
-    busy_dt = [(to_dt(b.start), to_dt(b.end)) for b in busy_intervals]
-
-    # Apply buffer ONLY to busy intervals
-    busy_buffered = apply_buffer(busy_dt)
-
-    # Clip to effective window
-    busy_clipped = clip_to_window(busy_buffered, effective_window)
-
-    # Merge overlaps
-    busy_merged = merge_intervals(busy_clipped)
-
-    # ----------------------------
-    # Compute free gaps
-    # ----------------------------
-
-    free_gaps = find_free_gaps(busy_merged, effective_window)
-
-    # ----------------------------
-    # Generate slots
-    # ----------------------------
-
-    slot_starts = generate_slots(free_gaps)
-
-    if not slot_starts:
-        return []
-
-    # Limit to N
-    slot_starts = slot_starts[:n]
-
-    # Convert to Slot objects
-    return [Slot(start_time=dt.time()) for dt in slot_starts]
-```
-
-✅ Notes on Alignment with Your Spec
-Half-open intervals: enforced via current + duration <= end
-Buffer only around busy intervals: applied before merging
-Discrete slots: increment by duration (no sliding windows)
-Unsorted + overlapping busy intervals: normalized via merge
-Candidate window: strict intersection with working hours
-Deterministic output: sorted implicitly via processing order
-No exception raised: returns [] if infeasible
-
-⚠️ Subtle Implementation Detail Worth Noting
-
-Buffer is applied before clipping and merging, which ensures:
-
-Adjacent buffered intervals merge correctly
-Edge clipping doesn't reintroduce illegal gaps
-
-If you want next, I can:
-
-walk through a tricky example step-by-step using real datetime values
-or write a full test suite that targets all your acceptance criteria + edge cases
-
-======================================================================
-PROMPT 4: WRITING THE TEST SUITE
-======================================================================
-Now we need to write the test suite for this implementation using pytest.
-
-Your Task:
-Write a test file named tests.py that imports suggest_slots, TimeWindow, BusyInterval, and Slot from solution.
-
-Requirements for the tests:
-
-You must write at least 5 executable tests.
-
-At least 2 of these must be edge-case tests (e.g., zero available slots, overlapping/unsorted busy intervals, or minimal gap exactly equal to duration + buffer).
-
-Each test function MUST include a comment mapping it to the specific constraints and acceptance criteria we defined earlier (e.g., # Validates C1, C2, AC1).
-
-Use datetime.date, datetime.time, and datetime.timedelta correctly to pass inputs to suggest_slots.
-
-Please provide the complete Python code for tests.py.
-
-======================================================================
-RESPONSE 4: ChatGPT
-======================================================================
-Here's a complete `tests.py` file using `pytest` that directly targets your implementation and maps each test to your **constraints (C)**, **acceptance criteria (AC)**, and **edge cases (EC)**.
-
-The tests are intentionally explicit and deterministic.
+* AC3 (exact same outputs) requires well-defined equality semantics.
 
 ---
 
-```python
-import pytest
-from datetime import date, time, timedelta
+## 2. Missing or Underspecified Constraints
 
-from solution import suggest_slots, TimeWindow, BusyInterval, Slot
+### Working Hours Validity
 
+No constraint ensures:
 
-TEST_DAY = date(2026, 1, 1)
+* `working_hours.start < working_hours.end`
 
+**Edge case:**
 
-def test_basic_availability_no_busy_intervals():
-    """
-    Validates:
-    - AC1: Slots do not overlap with busy intervals (none exist)
-    - AC6: Returned slots meet duration requirement
-    - C1: Slots fall within working hours
-    """
-    working_hours = TimeWindow(time(9, 0), time(11, 0))
-    busy = []
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=busy,
-        duration=timedelta(minutes=30),
-        n=3
-    )
-
-    assert slots == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-        Slot(time(10, 0)),
-    ]
-
-
-def test_buffer_respected_around_busy_intervals():
-    """
-    Validates:
-    - AC2: Buffer is respected before and after busy intervals
-    - C2: No slot violates buffer constraints
-    """
-    working_hours = TimeWindow(time(9, 0), time(12, 0))
-    busy = [BusyInterval(time(10, 0), time(11, 0))]
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=busy,
-        duration=timedelta(minutes=30),
-        buffer=timedelta(minutes=15),
-        n=10
-    )
-
-    # Busy becomes [9:45, 11:15]
-    # Valid slots: 9:00, 9:30 only
-    assert slots == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-    ]
-
-
-def test_unsorted_overlapping_busy_intervals_are_merged():
-    """
-    Validates:
-    - AC4: Overlapping and unsorted intervals are merged correctly
-    - C4: Correct handling of non-trivial interval structures
-    - EC2: Unsorted and overlapping intervals
-    """
-    working_hours = TimeWindow(time(9, 0), time(13, 0))
-    busy = [
-        BusyInterval(time(11, 0), time(12, 0)),
-        BusyInterval(time(10, 0), time(11, 30)),  # overlaps with above
-    ]
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=busy,
-        duration=timedelta(minutes=30),
-        n=10
-    )
-
-    # Merged busy: 10:00–12:00
-    # Free: 9:00–10:00, 12:00–13:00
-    assert slots == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-        Slot(time(12, 0)),
-        Slot(time(12, 30)),
-    ]
-
-
-def test_no_availability_returns_empty_list():
-    """
-    Validates:
-    - EC1: Fully booked day
-    - Exceptions rule: return [] instead of raising
-    """
-    working_hours = TimeWindow(time(9, 0), time(10, 0))
-    busy = [BusyInterval(time(9, 0), time(10, 0))]
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=busy,
-        duration=timedelta(minutes=30),
-        n=5
-    )
-
-    assert slots == []
-
-
-def test_minimal_gap_exact_fit_duration_plus_buffer():
-    """
-    Validates:
-    - EC3: Gap exactly equals duration + buffer constraints
-    - C2: Buffer correctness
-    """
-    working_hours = TimeWindow(time(9, 0), time(11, 0))
-    busy = [
-        BusyInterval(time(10, 0), time(11, 0))
-    ]
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=busy,
-        duration=timedelta(minutes=30),
-        buffer=timedelta(minutes=30),
-        n=5
-    )
-
-    # Busy expands to 9:30–11:30 → clipped to 9:30–11:00
-    # Free gap: 9:00–9:30 (exactly 30 min)
-    assert slots == [
-        Slot(time(9, 0)),
-    ]
-
-
-def test_candidate_window_restriction():
-    """
-    Validates:
-    - AC5: Candidate window is strictly enforced
-    - C1: Slots fall within effective window (intersection)
-    """
-    working_hours = TimeWindow(time(9, 0), time(17, 0))
-    candidate = TimeWindow(time(13, 0), time(15, 0))
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=[],
-        duration=timedelta(minutes=60),
-        candidate_window=candidate,
-        n=5
-    )
-
-    assert slots == [
-        Slot(time(13, 0)),
-        Slot(time(14, 0)),
-    ]
-
-
-def test_n_limits_number_of_results():
-    """
-    Validates:
-    - "Next N" requirement: only N slots returned
-    - Deterministic ordering (AC3)
-    """
-    working_hours = TimeWindow(time(9, 0), time(12, 0))
-
-    slots = suggest_slots(
-        day=TEST_DAY,
-        working_hours=working_hours,
-        busy_intervals=[],
-        duration=timedelta(minutes=30),
-        n=2
-    )
-
-    assert slots == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-    ]
-```
+* Zero-length or inverted working windows
 
 ---
 
-# ✅ Coverage Summary
+### Busy Interval Validity
 
-This suite covers:
+You require merging (C1), but don't define:
 
-### Core Functionality
-
-* Basic slot generation
-* Chronological ordering
-* Determinism
-
-### Constraints
-
-* Working hours enforcement
-* Buffer enforcement
-* No overlaps
-* Discrete slot generation
-
-### Acceptance Criteria
-
-* AC1, AC2, AC3, AC4, AC5, AC6 all explicitly tested
-
-### Edge Cases
-
-* EC1: Fully booked day
-* EC2: Unsorted + overlapping intervals
-* EC3: Exact-fit gap scenario
+* What happens with invalid intervals (end < start)
+* Whether zero-length intervals are allowed
 
 ---
 
-If you want to go one level further, I can:
+### Buffer Semantics (Major Ambiguity)
 
-* add **property-based tests (Hypothesis)** for robustness
-* or design **stress tests** for large interval sets
+C5 says:
 
-======================================================================
-PROMPT 5: ADAPTING TESTS TO TEACHING TEAM STARTER FILE
-======================================================================
-I just realized my teaching team also provided a starter tests.py file, It includes a custom validation helper assert_slots_basic_constraints and 5 initial tests.
+> "Buffer times must be strictly and consistently applied around all busy intervals"
 
-Your Task:
-Please rewrite the tests.py file. You must include the ENTIRE starter file exactly as it is written below, and then append the 5 explicit constraint-mapped tests you just wrote into the section at the bottom. Please adapt your tests to use the assert_slots_basic_constraints helper function where applicable.
+But unclear:
 
-Here is the starter file:
+* Is buffer applied:
 
-```python
-import pytest
-from datetime import date, datetime, time, timedelta
+  * Before + after each busy interval?
+  * Between slots?
+  * At working hours boundaries?
 
-# Update import path to match your project structure:
-from solution import TimeWindow, BusyInterval, Slot, suggest_slots
+**Critical edge case:**
+If buffer = 15 minutes:
 
-# ---------- Helpers ----------
+* Does a meeting need:
 
-def combine(d: date, t: time) -> datetime:
-    return datetime.combine(d, t)
+  * `duration + 2*buffer` clearance from busy intervals?
+  * Or just separation from busy intervals?
 
-def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
-    return a_start < b_end and b_start < a_end
+**Also unclear:**
 
-def in_window(win: TimeWindow, t: time) -> bool:
-    return win.start <= t < win.end
-
-def assert_slots_basic_constraints(
-    slots,
-    day,
-    working_hours,
-    busy_intervals,
-    duration,
-    n,
-    buffer,
-    candidate_window,
-):
-    # Return type / length
-    assert isinstance(slots, list)
-    assert len(slots) <= n
-
-    # Deterministic ordering: start_time ascending
-    assert slots == sorted(slots, key=lambda s: s.start_time)
-
-    # Each slot start must be within working_hours and candidate_window (if any)
-    for s in slots:
-        assert in_window(working_hours, s.start_time)
-        if candidate_window is not None:
-            assert in_window(candidate_window, s.start_time)
-
-    # Each slot must fit fully inside working_hours and candidate_window
-    for s in slots:
-        start_dt = combine(day, s.start_time)
-        end_dt = start_dt + duration
-
-        wh_end = combine(day, working_hours.end)
-        assert end_dt <= wh_end
-
-        if candidate_window is not None:
-            cw_end = combine(day, candidate_window.end)
-            assert end_dt <= cw_end
-
-    # No overlap with busy intervals, considering buffer:
-    for s in slots:
-        slot_start = combine(day, s.start_time)
-        slot_end = slot_start + duration
-
-        for b in busy_intervals:
-            b_start = combine(day, b.start) - buffer
-            b_end = combine(day, b.end) + buffer
-            assert not overlaps(slot_start, slot_end, b_start, b_end)
-
-# ---------- Tests ----------
-
-def test_a1_no_busy_simple_slots():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(12, 0))
-    busy = []
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(
-        day=day,
-        working_hours=working,
-        busy_intervals=busy,
-        duration=duration,
-        n=3,
-        buffer=timedelta(0),
-        candidate_window=None
-    )
-
-    assert_slots_basic_constraints(out, day, working, busy, duration, 3, timedelta(0), None)
-    assert len(out) > 0
-    assert out[0].start_time >= time(9, 0)
-
-def test_a2_deterministic_same_inputs_same_outputs():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(17, 0))
-    busy = [
-        BusyInterval(time(10, 0), time(10, 30)),
-        BusyInterval(time(13, 0), time(14, 0)),
-    ]
-    duration = timedelta(minutes=30)
-    buffer = timedelta(minutes=0)
-
-    out1 = suggest_slots(day, working, busy, duration, n=10, buffer=buffer, candidate_window=None)
-    out2 = suggest_slots(day, working, busy, duration, n=10, buffer=buffer, candidate_window=None)
-
-    assert [s.start_time for s in out1] == [s.start_time for s in out2]
-    assert_slots_basic_constraints(out1, day, working, busy, duration, 10, buffer, None)
-
-def test_a3_overlapping_and_unsorted_busy_intervals_handled():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(12, 0))
-    busy = [
-        BusyInterval(time(10, 30), time(11, 0)),
-        BusyInterval(time(10, 0), time(10, 45)),
-        BusyInterval(time(9, 30), time(9, 45)),
-    ]
-    duration = timedelta(minutes=15)
-
-    out = suggest_slots(day, working, busy, duration, n=8, buffer=timedelta(0), candidate_window=None)
-    assert_slots_basic_constraints(out, day, working, busy, duration, 8, timedelta(0), None)
-
-def test_a4_candidate_window_respected():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(17, 0))
-    candidate = TimeWindow(time(13, 0), time(15, 0))
-    busy = []
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(day, working, busy, duration, n=5, buffer=timedelta(0), candidate_window=candidate)
-    assert_slots_basic_constraints(out, day, working, busy, duration, 5, timedelta(0), candidate)
-    assert all(candidate.start <= s.start_time < candidate.end for s in out)
-
-def test_a5_buffer_eliminates_small_gaps():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(11, 0))
-    busy = [
-        BusyInterval(time(9, 30), time(9, 50)),
-        BusyInterval(time(10, 10), time(10, 30)),
-    ]
-    duration = timedelta(minutes=20)
-
-    out_no_buffer = suggest_slots(day, working, busy, duration, n=10, buffer=timedelta(0), candidate_window=None)
-    assert_slots_basic_constraints(out_no_buffer, day, working, busy, duration, 10, timedelta(0), None)
-
-    buf = timedelta(minutes=5)
-    out_with_buffer = suggest_slots(day, working, busy, duration, n=10, buffer=buf, candidate_window=None)
-    assert_slots_basic_constraints(out_with_buffer, day, working, busy, duration, 10, buf, None)
-    assert len(out_with_buffer) <= len(out_no_buffer)
-
-#################################################################################
-# Add your own additional tests here to cover more cases and edge cases as needed.
-#################################################################################
-```
-
-======================================================================
-RESPONSE 5: ChatGPT
-======================================================================
-Here is your **complete `tests.py` file**, with the starter content preserved exactly and your additional constraint-mapped tests appended at the bottom.
-
-I've adapted the new tests to **use `assert_slots_basic_constraints` wherever applicable**, while still asserting exact outputs when needed.
+* Is buffer applied between *recommended slots themselves*?
 
 ---
 
-```python
-import pytest
-from datetime import date, datetime, time, timedelta
+### Candidate Window Interaction
 
-# Update import path to match your project structure:
-from solution import TimeWindow, BusyInterval, Slot, suggest_slots
+You state clipping (C6), but not:
 
-# ---------- Helpers ----------
+* What happens if:
 
-def combine(d: date, t: time) -> datetime:
-    return datetime.combine(d, t)
-
-def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
-    return a_start < b_end and b_start < a_end
-
-def in_window(win: TimeWindow, t: time) -> bool:
-    return win.start <= t < win.end
-
-def assert_slots_basic_constraints(
-    slots,
-    day,
-    working_hours,
-    busy_intervals,
-    duration,
-    n,
-    buffer,
-    candidate_window,
-):
-    # Return type / length
-    assert isinstance(slots, list)
-    assert len(slots) <= n
-
-    # Deterministic ordering: start_time ascending
-    assert slots == sorted(slots, key=lambda s: s.start_time)
-
-    # Each slot start must be within working_hours and candidate_window (if any)
-    for s in slots:
-        assert in_window(working_hours, s.start_time)
-        if candidate_window is not None:
-            assert in_window(candidate_window, s.start_time)
-
-    # Each slot must fit fully inside working_hours and candidate_window
-    for s in slots:
-        start_dt = combine(day, s.start_time)
-        end_dt = start_dt + duration
-
-        wh_end = combine(day, working_hours.end)
-        assert end_dt <= wh_end
-
-        if candidate_window is not None:
-            cw_end = combine(day, candidate_window.end)
-            assert end_dt <= cw_end
-
-    # No overlap with busy intervals, considering buffer:
-    for s in slots:
-        slot_start = combine(day, s.start_time)
-        slot_end = slot_start + duration
-
-        for b in busy_intervals:
-            b_start = combine(day, b.start) - buffer
-            b_end = combine(day, b.end) + buffer
-            assert not overlaps(slot_start, slot_end, b_start, b_end)
-
-# ---------- Tests ----------
-
-def test_a1_no_busy_simple_slots():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(12, 0))
-    busy = []
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(
-        day=day,
-        working_hours=working,
-        busy_intervals=busy,
-        duration=duration,
-        n=3,
-        buffer=timedelta(0),
-        candidate_window=None
-    )
-
-    assert_slots_basic_constraints(out, day, working, busy, duration, 3, timedelta(0), None)
-    assert len(out) > 0
-    assert out[0].start_time >= time(9, 0)
-
-def test_a2_deterministic_same_inputs_same_outputs():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(17, 0))
-    busy = [
-        BusyInterval(time(10, 0), time(10, 30)),
-        BusyInterval(time(13, 0), time(14, 0)),
-    ]
-    duration = timedelta(minutes=30)
-    buffer = timedelta(minutes=0)
-
-    out1 = suggest_slots(day, working, busy, duration, n=10, buffer=buffer, candidate_window=None)
-    out2 = suggest_slots(day, working, busy, duration, n=10, buffer=buffer, candidate_window=None)
-
-    assert [s.start_time for s in out1] == [s.start_time for s in out2]
-    assert_slots_basic_constraints(out1, day, working, busy, duration, 10, buffer, None)
-
-def test_a3_overlapping_and_unsorted_busy_intervals_handled():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(12, 0))
-    busy = [
-        BusyInterval(time(10, 30), time(11, 0)),
-        BusyInterval(time(10, 0), time(10, 45)),
-        BusyInterval(time(9, 30), time(9, 45)),
-    ]
-    duration = timedelta(minutes=15)
-
-    out = suggest_slots(day, working, busy, duration, n=8, buffer=timedelta(0), candidate_window=None)
-    assert_slots_basic_constraints(out, day, working, busy, duration, 8, timedelta(0), None)
-
-def test_a4_candidate_window_respected():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(17, 0))
-    candidate = TimeWindow(time(13, 0), time(15, 0))
-    busy = []
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(day, working, busy, duration, n=5, buffer=timedelta(0), candidate_window=candidate)
-    assert_slots_basic_constraints(out, day, working, busy, duration, 5, timedelta(0), candidate)
-    assert all(candidate.start <= s.start_time < candidate.end for s in out)
-
-def test_a5_buffer_eliminates_small_gaps():
-    day = date(2026, 2, 24)
-    working = TimeWindow(time(9, 0), time(11, 0))
-    busy = [
-        BusyInterval(time(9, 30), time(9, 50)),
-        BusyInterval(time(10, 10), time(10, 30)),
-    ]
-    duration = timedelta(minutes=20)
-
-    out_no_buffer = suggest_slots(day, working, busy, duration, n=10, buffer=timedelta(0), candidate_window=None)
-    assert_slots_basic_constraints(out_no_buffer, day, working, busy, duration, 10, timedelta(0), None)
-
-    buf = timedelta(minutes=5)
-    out_with_buffer = suggest_slots(day, working, busy, duration, n=10, buffer=buf, candidate_window=None)
-    assert_slots_basic_constraints(out_with_buffer, day, working, busy, duration, 10, buf, None)
-    assert len(out_with_buffer) <= len(out_no_buffer)
-
-#################################################################################
-# Add your own additional tests here to cover more cases and edge cases as needed.
-#################################################################################
-
-def test_b1_no_busy_exact_slots_and_order():
-    """
-    Validates:
-    - AC1, AC6: correct slot generation and duration
-    - C1: within working hours
-    """
-    day = date(2026, 1, 1)
-    working = TimeWindow(time(9, 0), time(11, 0))
-    busy = []
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(day, working, busy, duration, n=3)
-
-    assert_slots_basic_constraints(out, day, working, busy, duration, 3, timedelta(0), None)
-    assert out == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-        Slot(time(10, 0)),
-    ]
-
-
-def test_b2_buffer_blocks_slots_correctly():
-    """
-    Validates:
-    - AC2: buffer respected
-    - C2: no violation of buffered intervals
-    """
-    day = date(2026, 1, 1)
-    working = TimeWindow(time(9, 0), time(12, 0))
-    busy = [BusyInterval(time(10, 0), time(11, 0))]
-    duration = timedelta(minutes=30)
-    buffer = timedelta(minutes=15)
-
-    out = suggest_slots(day, working, busy, duration, n=10, buffer=buffer)
-
-    assert_slots_basic_constraints(out, day, working, busy, duration, 10, buffer, None)
-    assert out == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-    ]
-
-
-def test_b3_unsorted_overlapping_intervals_merge():
-    """
-    Validates:
-    - AC4: merging logic
-    - EC2: unsorted + overlapping intervals
-    """
-    day = date(2026, 1, 1)
-    working = TimeWindow(time(9, 0), time(13, 0))
-    busy = [
-        BusyInterval(time(11, 0), time(12, 0)),
-        BusyInterval(time(10, 0), time(11, 30)),
-    ]
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(day, working, busy, duration, n=10)
-
-    assert_slots_basic_constraints(out, day, working, busy, duration, 10, timedelta(0), None)
-    assert out == [
-        Slot(time(9, 0)),
-        Slot(time(9, 30)),
-        Slot(time(12, 0)),
-        Slot(time(12, 30)),
-    ]
-
-
-def test_b4_fully_booked_returns_empty():
-    """
-    Validates:
-    - EC1: no availability
-    - exception rule: returns []
-    """
-    day = date(2026, 1, 1)
-    working = TimeWindow(time(9, 0), time(10, 0))
-    busy = [BusyInterval(time(9, 0), time(10, 0))]
-    duration = timedelta(minutes=30)
-
-    out = suggest_slots(day, working, busy, duration, n=5)
-
-    assert out == []
-
-
-def test_b5_exact_fit_gap_with_buffer():
-    """
-    Validates:
-    - EC3: exact fit gap
-    - C2: buffer correctness
-    """
-    day = date(2026, 1, 1)
-    working = TimeWindow(time(9, 0), time(11, 0))
-    busy = [BusyInterval(time(10, 0), time(11, 0))]
-    duration = timedelta(minutes=30)
-    buffer = timedelta(minutes=30)
-
-    out = suggest_slots(day, working, busy, duration, n=5, buffer=buffer)
-
-    assert_slots_basic_constraints(out, day, working, busy, duration, 5, buffer, None)
-    assert out == [
-        Slot(time(9, 0)),
-    ]
-```
+  * Candidate window becomes empty after clipping
+  * Multiple candidate windows exist (is it only one?)
 
 ---
 
-# ✅ What You Now Have
+### Handling of `n`
 
-* Your **starter tests preserved exactly** (as required)
-* **5 additional high-quality tests**
-* Full coverage of:
+Not defined:
 
-  * Constraints (C1, C2, etc.)
-  * Acceptance Criteria (AC1–AC6)
-  * Edge cases (EC1–EC3)
-* Proper use of the provided **validation helper**
+* What if `n <= 0`?
+
+**Determinism concern:**
+
+* Should return `[]`, or error?
 
 ---
 
-If you want to push this even further, the next step would be:
+## 3. Determinism Risks (Critical for Mo)
 
-* adding **randomized fuzz tests**
-* or validating against a **reference brute-force implementation**
+Even though C3 exists, several hidden non-determinism risks remain:
 
-Both are excellent for catching subtle scheduling bugs.
+### Sorting Stability
+
+You say "chronologically ordered," but not:
+
+* What happens when two slots have identical start times?
+
+**Recommendation:**
+Define tie-breaking explicitly (e.g., by end time).
+
+---
+
+### Floating Time Arithmetic
+
+If durations or buffers are not integral units:
+
+* Rounding errors could produce inconsistent outputs
+
+---
+
+### Iteration Order
+
+If implementation depends on:
+
+* Unordered structures (e.g., sets, dicts pre-ordered guarantees)
+
+You risk violating AC3.
+
+---
+
+## 4. Edge Cases Not Covered in Acceptance Criteria
+
+### Zero-Length Gaps
+
+What happens when:
+
+* Gap == 0
+* Gap < duration
+* Gap == duration exactly (with/without buffer)
+
+AC5 partially covers this, but not fully.
+
+---
+
+### Slots Touching Boundaries
+
+Not explicitly covered:
+
+* Slot starting exactly at working_hours.start
+* Slot ending exactly at working_hours.end
+
+---
+
+### No Busy Intervals
+
+Missing AC:
+
+* If `busy_intervals = []`, should fill entire working window
+
+---
+
+### Extremely Dense Schedules
+
+* Many small fragmented gaps
+* Potential performance implications (not addressed)
+
+---
+
+### Duplicate Busy Intervals
+
+* Are duplicates allowed?
+* Should merging remove duplicates deterministically?
+
+---
+
+### Candidate Window Fully Outside Working Hours
+
+You handle partial overlap (C6), but not:
+
+* Full non-overlap → should return `[]`
+
+---
+
+## 5. Output Guarantees (Underspecified)
+
+### "Up to N slots"
+
+You don't define:
+
+* Whether system should:
+
+  * Prefer earliest slots (implied but not explicit)
+  * Or optimize for spacing / distribution
+
+Given Jane's persona:
+
+* "Earliest-first greedy" should likely be explicit
+
+---
+
+### Slot Contiguity
+
+Not defined:
+
+* Should slots be:
+
+  * Maximally packed?
+  * Or spaced out?
+
+---
+
+## 6. Silent Assumptions That Should Be Explicit
+
+To fully satisfy Mo (determinism + no ambiguity), you should explicitly define:
+
+* Whether:
+
+  * Inputs are validated or assumed correct
+  * Invalid inputs raise errors vs return `[]`
+* Whether:
+
+  * Time precision is fixed (e.g., minutes only)
+* Whether:
+
+  * All computations are pure (no randomness, no external state)
+
+---
+
+## 7. Persona Alignment Check
+
+### Jane (automation, no oversight)
+
+✅ Strong:
+
+* C1 (auto-merge)
+* C2 (sorted output)
+* C4 (no crashes)
+
+⚠️ Risk:
+
+* Undefined behaviors may force manual debugging
+
+---
+
+### Mo (determinism, predictability)
+
+✅ Strong:
+
+* C3 (determinism)
+* Explicit empty list handling
+
+⚠️ Risks:
+
+* Boundary ambiguity (interval semantics)
+* Buffer ambiguity
+* Time representation issues
+* Tie-breaking rules missing
+
+---
+
+## 8. Summary of Key Gaps to Fix
+
+If you only address a few things, prioritize these:
+
+1. **Define interval semantics (open/closed)**
+2. **Clarify buffer application rules**
+3. **Specify time format + timezone handling**
+4. **Define deterministic tie-breaking**
+5. **Clarify behavior for invalid inputs (n ≤ 0, bad intervals)**
+6. **Explicitly define slot structure and equality**
+7. **Clarify candidate window edge cases**
+
+---
+
+If you want, I can help you convert this into a *formal, implementation-ready spec* with zero ambiguity before you start coding.
