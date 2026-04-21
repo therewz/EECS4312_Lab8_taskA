@@ -31,3 +31,9 @@ Prompt 2: To satisfy Jane's need for seamless automation and Mo's need for absol
 Response summary: The LLM provided a deterministic Python implementation of suggest_slots using the required dataclass stub. It correctly implemented logic for half-open intervals, earliest-first slot generation, and explicit edge-case handling for invalid inputs.
 
 Your decision: Accept. The code strictly adheres to the persona-based constraints and successfully resolves the ambiguities identified during the requirements review.
+
+Prompt 3: Now, we need to write the test suite in tests.py using pytest. Your Task: Write at least 5 executable tests that import from solution.py. Test Requirements: At least 2 tests must cover persona-based edge cases (e.g., Mo's need for no silent failures when fully booked, or Jane's need for automatic merging of overlapping intervals). You MUST use the assert_slots_basic_constraints helper function from our previous Lab 8 stub. 3. Traceability Requirement: Above each test function, you must include a comment indicating which Constraint (C) and Acceptance Criterion (AC) it verifies (e.g., # Covers C3, AC2). Ensure the tests are deterministic and use datetime.time and datetime.timedelta correctly.
+
+Response summary: The LLM generated a test suite for tests.py with six tests, including persona-based edge cases like fully booked schedules and overlapping intervals. It provided traceability comments mapping tests to specific Constraints (C) and Acceptance Criteria (AC).
+
+Your decision: Accept. The tests cover the required breadth and satisfy the traceability requirements for both personas.
