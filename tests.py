@@ -179,9 +179,10 @@ def test_b2_buffer_blocks_slots_correctly():
     out = suggest_slots(day, working, busy, duration, n=10, buffer=buffer)
 
     assert_slots_basic_constraints(out, day, working, busy, duration, 10, buffer, None)
+    # Buffer expands busy to 9:45–11:15; gaps are 9:00–9:45 and 11:15–12:00
     assert out == [
         Slot(time(9, 0)),
-        Slot(time(9, 30)),
+        Slot(time(11, 15)),
     ]
 
 
