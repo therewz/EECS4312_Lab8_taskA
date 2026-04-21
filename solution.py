@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, time
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 @dataclass(frozen=True)
 class TimeWindow:
@@ -33,146 +33,119 @@ def suggest_slots(
     candidate_window: Optional[TimeWindow] = None
 ) -> List[Slot]:
 
-    # ----------------------------
-    # Helper functions
-    # ----------------------------
+    # -----------------------------
+    # 1. Validate deterministic early exits
+    # -----------------------------
+    if n <= 0 or duration <= timedelta(0):
+        return []
 
     def to_dt(t: time) -> datetime:
-        """Combine date + time into datetime."""
         return datetime.combine(day, t)
 
-    def merge_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
-        """Merge overlapping or adjacent intervals."""
-        if not intervals:
-            return []
+    def to_time(dt: datetime) -> time:
+        return dt.time()
 
-        intervals.sort(key=lambda x: x[0])
-        merged = [intervals[0]]
+    work_start = to_dt(working_hours.start)
+    work_end = to_dt(working_hours.end)
 
-        for curr_start, curr_end in intervals[1:]:
-            last_start, last_end = merged[-1]
-
-            if curr_start <= last_end:  # overlap or adjacent
-                merged[-1] = (last_start, max(last_end, curr_end))
-            else:
-                merged.append((curr_start, curr_end))
-
-        return merged
-
-    def apply_buffer(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
-        """Expand each interval by buffer before and after."""
-        if buffer <= timedelta(0):
-            return intervals[:]
-
-        return [(start - buffer, end + buffer) for start, end in intervals]
-
-    def clip_to_window(
-        intervals: List[Tuple[datetime, datetime]],
-        window: Tuple[datetime, datetime]
-    ) -> List[Tuple[datetime, datetime]]:
-        """Clip intervals to the effective window."""
-        w_start, w_end = window
-        clipped = []
-
-        for start, end in intervals:
-            if end <= w_start or start >= w_end:
-                continue
-            clipped.append((max(start, w_start), min(end, w_end)))
-
-        return clipped
-
-    def find_free_gaps(
-        busy: List[Tuple[datetime, datetime]],
-        window: Tuple[datetime, datetime]
-    ) -> List[Tuple[datetime, datetime]]:
-        """Find free gaps within window given merged busy intervals."""
-        free = []
-        w_start, w_end = window
-
-        prev_end = w_start
-
-        for start, end in busy:
-            if start > prev_end:
-                free.append((prev_end, start))
-            prev_end = max(prev_end, end)
-
-        if prev_end < w_end:
-            free.append((prev_end, w_end))
-
-        return free
-
-    def generate_slots(
-        gaps: List[Tuple[datetime, datetime]]
-    ) -> List[datetime]:
-        """Generate discrete slot start times."""
-        starts = []
-
-        for start, end in gaps:
-            current = start
-            while current + duration <= end:
-                starts.append(current)
-                current += duration  # discrete, non-overlapping
-
-        return starts
-
-    # ----------------------------
-    # Input validation
-    # ----------------------------
-
-    if duration <= timedelta(0) or n <= 0:
+    if work_start >= work_end:
         return []
 
-    w_start = to_dt(working_hours.start)
-    w_end = to_dt(working_hours.end)
-
-    if w_start >= w_end:
-        return []
-
-    # Apply candidate window (intersection)
+    # -----------------------------
+    # 2. Apply candidate window (with clipping)
+    # -----------------------------
     if candidate_window:
-        c_start = to_dt(candidate_window.start)
-        c_end = to_dt(candidate_window.end)
+        cand_start = to_dt(candidate_window.start)
+        cand_end = to_dt(candidate_window.end)
 
-        w_start = max(w_start, c_start)
-        w_end = min(w_end, c_end)
+        # Clip to working hours
+        window_start = max(work_start, cand_start)
+        window_end = min(work_end, cand_end)
 
-        if w_start >= w_end:
+        if window_start >= window_end:
             return []
+    else:
+        window_start = work_start
+        window_end = work_end
 
-    effective_window = (w_start, w_end)
+    # -----------------------------
+    # 3. Normalize + merge busy intervals
+    # -----------------------------
+    normalized = []
 
-    # ----------------------------
-    # Process busy intervals
-    # ----------------------------
+    for b in busy_intervals:
+        start = to_dt(b.start)
+        end = to_dt(b.end)
 
-    busy_dt = [(to_dt(b.start), to_dt(b.end)) for b in busy_intervals]
+        # Ignore invalid or zero-length intervals deterministically
+        if start >= end:
+            continue
 
-    # Apply buffer ONLY to busy intervals
-    busy_buffered = apply_buffer(busy_dt)
+        # Apply buffer ONLY around busy intervals
+        start -= buffer
+        end += buffer
 
-    # Clip to effective window
-    busy_clipped = clip_to_window(busy_buffered, effective_window)
+        # Clip to working window (important for determinism)
+        start = max(start, work_start)
+        end = min(end, work_end)
 
-    # Merge overlaps
-    busy_merged = merge_intervals(busy_clipped)
+        if start < end:
+            normalized.append((start, end))
 
-    # ----------------------------
-    # Compute free gaps
-    # ----------------------------
+    # Sort deterministically
+    normalized.sort(key=lambda x: x[0])
 
-    free_gaps = find_free_gaps(busy_merged, effective_window)
+    # Merge overlapping intervals
+    merged = []
+    for interval in normalized:
+        if not merged:
+            merged.append(interval)
+        else:
+            prev_start, prev_end = merged[-1]
+            curr_start, curr_end = interval
 
-    # ----------------------------
-    # Generate slots
-    # ----------------------------
+            if curr_start <= prev_end:  # overlap (half-open safe)
+                merged[-1] = (prev_start, max(prev_end, curr_end))
+            else:
+                merged.append(interval)
 
-    slot_starts = generate_slots(free_gaps)
+    # -----------------------------
+    # 4. Find free gaps
+    # -----------------------------
+    free_gaps = []
+    current = window_start
 
-    if not slot_starts:
-        return []
+    for start, end in merged:
+        if end <= window_start or start >= window_end:
+            continue
 
-    # Limit to N
-    slot_starts = slot_starts[:n]
+        gap_start = current
+        gap_end = min(start, window_end)
 
-    # Convert to Slot objects
-    return [Slot(start_time=dt.time()) for dt in slot_starts]
+        if gap_start < gap_end:
+            free_gaps.append((gap_start, gap_end))
+
+        current = max(current, end)
+
+    # Final trailing gap
+    if current < window_end:
+        free_gaps.append((current, window_end))
+
+    # -----------------------------
+    # 5. Generate slots (deterministic, earliest-first)
+    # -----------------------------
+    slots: List[Slot] = []
+
+    for gap_start, gap_end in free_gaps:
+        cursor = gap_start
+
+        while cursor + duration <= gap_end:
+            slots.append(Slot(start_time=to_time(cursor)))
+
+            if len(slots) >= n:
+                return slots
+
+            # No buffer between slots per spec
+            cursor += duration
+
+    return slots
