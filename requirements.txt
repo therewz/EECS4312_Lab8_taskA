@@ -1,75 +1,55 @@
-### Question #1
-Your Task Assignment Type?
+## Student Name: Seyedreza Rezazadehtehrani
+## Student ID: 216217481
 
+## Task Assignment Type
 A
 
-### Question #2
-Describe in 1â2 sentences the objective of the system.
-
+## Objective
 The objective of the system is to recommend chronologically ordered and available meeting slots within a defined working window. It evaluates requested meeting durations against existing busy intervals and buffer constraints to identify valid appointment times.
 
-### Question #3
-Inputs and Outputs
-
-Inputs: Describe each input parameter. What type and format do each take? What values are valid?
-
+## Inputs and Outputs
+Inputs:
 - working_hours: Tuple or list of times (start & end) defining the overall valid time window.
 - busy_intervals: List of time tuples representing existing meetings that cannot be overlapped.
 - meeting_duration: Integer or float representing the required length of the appointment.
 - buffer_time (Optional): Integer or float representing the required mandatory gap between meetings.
 - candidate_window (Optional): Tuple of times restricting suggestions to a specific subset of the working hours.
 
-### Question #4
-Output: Describe what the function returns.
-
+Output:
 A chronologically ordered list of tuples representing the next N valid appointment slots that satisfy all constraints.
 
-### Question #5
-Functional Requirements
+## Functional Requirements
+1. The system must accept working hours, a list of existing busy intervals, and a required meeting duration.
+2. The system must accept an optional buffer time between meetings.
+3. The system must optionally restrict suggestions to a specific candidate time window.
+4. The system must return appointment slots ordered chronologically.
+5. The system must handle and consolidate overlapping or unsorted busy intervals.
+6. The system must output the next N valid appointment suggestions.
 
-- The system must accept working hours, a list of existing busy intervals, and a required meeting duration.
-- The system must accept an optional buffer time between meetings.
-- The system must optionally restrict suggestions to a specific candidate time window.
-- The system must return appointment slots ordered chronologically.
-- The system must handle and consolidate overlapping or unsorted busy intervals.
-- The system must output the next N valid appointment suggestions.
+## Constraints
+C1. Suggested slots must fall entirely within the defined working hours (or candidate window if provided).
+C2. Suggested slots must not overlap with any existing busy intervals.
+C3. Buffer time must be strictly respected before and after busy intervals when evaluating availability.
+C4. Output ordering must be deterministic under identical inputs.
+C5. The system must accurately process busy intervals even if they are provided unsorted.
+C6. The system must correctly navigate non-trivial scenarios like adjacent busy intervals with zero gap.
 
-### Question #6
-Constraints
+## Invariants
+I1. Returned slots must always be at least as long as the required meeting duration.
+I2. No returned slot may violate the buffer constraints relative to existing busy intervals.
+I3. The returned list must always reflect the current system state (no phantom availability).
 
-1. Suggested slots must fall entirely within the defined working hours (or candidate window if provided).
-2. Suggested slots must not overlap with any existing busy intervals.
-3. Buffer time must be strictly respected before and after busy intervals when evaluating availability.
-4. Output ordering must be deterministic under identical inputs.
-5. The system must accurately process busy intervals even if they are provided unsorted.
-6. The system must correctly navigate non-trivial scenarios like adjacent busy intervals with zero gap.
+## Negative Requirements
+NR1. The system must not suggest times that fall outside the specified working hours.
+NR2. The system must not return overlapping available slots as separate recommendations.
 
-### Question #7
-Invariants
-
-1. Returned slots must always be at least as long as the required meeting duration.
-2. No returned slot may violate the buffer constraints relative to existing busy intervals.
-3. The returned list must always reflect the current system state (no phantom availability).
-
-### Question #8
-Negative Requirements
-
-1. The system must not suggest times that fall outside the specified working hours.
-2. The system must not return overlapping available slots as separate recommendations.
-
-### Question #9
-Tie-Breaking Rules
-
+## Tie-Breaking Rules
 If multiple feasible scenarios or slots satisfy all constraints, the system prioritizes them strictly by chronological order (the earliest available valid start time is chosen first).
 
-### Question #10
-Exceptions and Day-Specific Rules
-
+## Exceptions and Day-Specific Rules
 If the requested meeting duration (plus any required buffer) is longer than any available gap within the working window, or if the working window is fully booked, the system must handle the exception by returning an empty list (indicating no availability).
 
-### Question #11
-Acceptance Criteria
-
+## Acceptance Criteria
 AC1:
 Given a defined working window and a list of busy intervals,
 When a meeting duration is requested,
@@ -106,9 +86,7 @@ When valid slots are returned,
 Then every returned slot's duration is greater than or equal to the requested duration.
 Linked Constraint ID(s): I1
 
-### Question #12
-Edge Cases
-
+## Edge Cases
 EC1:
 Description: No availability within the working window (e.g., fully booked day).
 Linked Constraint ID(s): C1, C2
@@ -129,12 +107,12 @@ Description: The requested meeting duration is longer than the entire working ho
 Linked Constraint ID(s): C1
 Covered by Acceptance Criteria ID(s): AC5
 
-### Question #13
-Traceability Table
-
-C1 System Description AC5 test_candidate_window_limits
-C2 System Description AC1 test_no_overlap_busy_intervals
-C3 System Description AC2 test_buffer_time_respected
-C4 System Description AC3 test_deterministic_output
-C5 Non-trivial Scenarios AC4 test_unsorted_overlapping_intervals
-C6 Non-trivial Scenarios AC4 test_adjacent_busy_intervals
+## Traceability Table
+Constraint ID | Derived From Where | Linked AC IDs | Linked Test Name(s)
+--- | --- | --- | ---
+C1 | System Description | AC5 | test_candidate_window_limits
+C2 | System Description | AC1 | test_no_overlap_busy_intervals
+C3 | System Description | AC2 | test_buffer_time_respected
+C4 | System Description | AC3 | test_deterministic_output
+C5 | Non-trivial Scenarios | AC4 | test_unsorted_overlapping_intervals
+C6 | Non-trivial Scenarios | AC4 | test_adjacent_busy_intervals
