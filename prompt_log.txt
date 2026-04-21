@@ -717,3 +717,253 @@ If you want next, I can:
 
 walk through a tricky example step-by-step using real datetime values
 or write a full test suite that targets all your acceptance criteria + edge cases
+
+======================================================================
+PROMPT 4: WRITING THE TEST SUITE
+======================================================================
+Now we need to write the test suite for this implementation using pytest.
+
+Your Task:
+Write a test file named tests.py that imports suggest_slots, TimeWindow, BusyInterval, and Slot from solution.
+
+Requirements for the tests:
+
+You must write at least 5 executable tests.
+
+At least 2 of these must be edge-case tests (e.g., zero available slots, overlapping/unsorted busy intervals, or minimal gap exactly equal to duration + buffer).
+
+Each test function MUST include a comment mapping it to the specific constraints and acceptance criteria we defined earlier (e.g., # Validates C1, C2, AC1).
+
+Use datetime.date, datetime.time, and datetime.timedelta correctly to pass inputs to suggest_slots.
+
+Please provide the complete Python code for tests.py.
+
+======================================================================
+RESPONSE 4: ChatGPT
+======================================================================
+Here's a complete `tests.py` file using `pytest` that directly targets your implementation and maps each test to your **constraints (C)**, **acceptance criteria (AC)**, and **edge cases (EC)**.
+
+The tests are intentionally explicit and deterministic.
+
+---
+
+```python
+import pytest
+from datetime import date, time, timedelta
+
+from solution import suggest_slots, TimeWindow, BusyInterval, Slot
+
+
+TEST_DAY = date(2026, 1, 1)
+
+
+def test_basic_availability_no_busy_intervals():
+    """
+    Validates:
+    - AC1: Slots do not overlap with busy intervals (none exist)
+    - AC6: Returned slots meet duration requirement
+    - C1: Slots fall within working hours
+    """
+    working_hours = TimeWindow(time(9, 0), time(11, 0))
+    busy = []
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=busy,
+        duration=timedelta(minutes=30),
+        n=3
+    )
+
+    assert slots == [
+        Slot(time(9, 0)),
+        Slot(time(9, 30)),
+        Slot(time(10, 0)),
+    ]
+
+
+def test_buffer_respected_around_busy_intervals():
+    """
+    Validates:
+    - AC2: Buffer is respected before and after busy intervals
+    - C2: No slot violates buffer constraints
+    """
+    working_hours = TimeWindow(time(9, 0), time(12, 0))
+    busy = [BusyInterval(time(10, 0), time(11, 0))]
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=busy,
+        duration=timedelta(minutes=30),
+        buffer=timedelta(minutes=15),
+        n=10
+    )
+
+    # Busy becomes [9:45, 11:15]
+    # Valid slots: 9:00, 9:30 only
+    assert slots == [
+        Slot(time(9, 0)),
+        Slot(time(9, 30)),
+    ]
+
+
+def test_unsorted_overlapping_busy_intervals_are_merged():
+    """
+    Validates:
+    - AC4: Overlapping and unsorted intervals are merged correctly
+    - C4: Correct handling of non-trivial interval structures
+    - EC2: Unsorted and overlapping intervals
+    """
+    working_hours = TimeWindow(time(9, 0), time(13, 0))
+    busy = [
+        BusyInterval(time(11, 0), time(12, 0)),
+        BusyInterval(time(10, 0), time(11, 30)),  # overlaps with above
+    ]
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=busy,
+        duration=timedelta(minutes=30),
+        n=10
+    )
+
+    # Merged busy: 10:00–12:00
+    # Free: 9:00–10:00, 12:00–13:00
+    assert slots == [
+        Slot(time(9, 0)),
+        Slot(time(9, 30)),
+        Slot(time(12, 0)),
+        Slot(time(12, 30)),
+    ]
+
+
+def test_no_availability_returns_empty_list():
+    """
+    Validates:
+    - EC1: Fully booked day
+    - Exceptions rule: return [] instead of raising
+    """
+    working_hours = TimeWindow(time(9, 0), time(10, 0))
+    busy = [BusyInterval(time(9, 0), time(10, 0))]
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=busy,
+        duration=timedelta(minutes=30),
+        n=5
+    )
+
+    assert slots == []
+
+
+def test_minimal_gap_exact_fit_duration_plus_buffer():
+    """
+    Validates:
+    - EC3: Gap exactly equals duration + buffer constraints
+    - C2: Buffer correctness
+    """
+    working_hours = TimeWindow(time(9, 0), time(11, 0))
+    busy = [
+        BusyInterval(time(10, 0), time(11, 0))
+    ]
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=busy,
+        duration=timedelta(minutes=30),
+        buffer=timedelta(minutes=30),
+        n=5
+    )
+
+    # Busy expands to 9:30–11:30 → clipped to 9:30–11:00
+    # Free gap: 9:00–9:30 (exactly 30 min)
+    assert slots == [
+        Slot(time(9, 0)),
+    ]
+
+
+def test_candidate_window_restriction():
+    """
+    Validates:
+    - AC5: Candidate window is strictly enforced
+    - C1: Slots fall within effective window (intersection)
+    """
+    working_hours = TimeWindow(time(9, 0), time(17, 0))
+    candidate = TimeWindow(time(13, 0), time(15, 0))
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=[],
+        duration=timedelta(minutes=60),
+        candidate_window=candidate,
+        n=5
+    )
+
+    assert slots == [
+        Slot(time(13, 0)),
+        Slot(time(14, 0)),
+    ]
+
+
+def test_n_limits_number_of_results():
+    """
+    Validates:
+    - "Next N" requirement: only N slots returned
+    - Deterministic ordering (AC3)
+    """
+    working_hours = TimeWindow(time(9, 0), time(12, 0))
+
+    slots = suggest_slots(
+        day=TEST_DAY,
+        working_hours=working_hours,
+        busy_intervals=[],
+        duration=timedelta(minutes=30),
+        n=2
+    )
+
+    assert slots == [
+        Slot(time(9, 0)),
+        Slot(time(9, 30)),
+    ]
+```
+
+---
+
+# ✅ Coverage Summary
+
+This suite covers:
+
+### Core Functionality
+
+* Basic slot generation
+* Chronological ordering
+* Determinism
+
+### Constraints
+
+* Working hours enforcement
+* Buffer enforcement
+* No overlaps
+* Discrete slot generation
+
+### Acceptance Criteria
+
+* AC1, AC2, AC3, AC4, AC5, AC6 all explicitly tested
+
+### Edge Cases
+
+* EC1: Fully booked day
+* EC2: Unsorted + overlapping intervals
+* EC3: Exact-fit gap scenario
+
+---
+
+If you want to go one level further, I can:
+
+* add **property-based tests (Hypothesis)** for robustness
+* or design **stress tests** for large interval sets
