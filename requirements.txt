@@ -74,4 +74,8 @@ FR1 -> C5 -> AC5
 FR1 -> C6 -> AC6
 
 Revision Notes
-(No revisions yet)
+
+Revision Note 1
+Requirement updated: Assumptions (Added A7, A8) and C6
+Reason: During the requirement review, the LLM identified ambiguities regarding interval boundaries, invalid inputs, and candidate windows fully outside working hours.
+Action: Added explicit rules stating that intervals are half-open [start, end), `n <= 0` returns an empty list, and candidate windows with zero overlap return an empty list. (Triggered by LLM feedback).
